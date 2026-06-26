@@ -6,7 +6,6 @@
   <title>Remote Mic</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       background: #111827;
@@ -16,7 +15,6 @@
       align-items: center;
       justify-content: center;
     }
-
     .card {
       background: #1f2937;
       border: 1px solid #374151;
@@ -26,20 +24,13 @@
       text-align: center;
       box-shadow: 0 25px 50px rgba(0,0,0,0.4);
     }
-
     h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 6px; }
     .subtitle { font-size: 0.85rem; color: #9ca3af; margin-bottom: 32px; }
-
     .mic-ring {
-      width: 100px;
-      height: 100px;
-      border-radius: 50%;
+      width: 100px; height: 100px; border-radius: 50%;
       margin: 0 auto 28px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #374151;
-      border: 3px solid #4b5563;
+      display: flex; align-items: center; justify-content: center;
+      background: #374151; border: 3px solid #4b5563;
       transition: border-color 0.3s, box-shadow 0.3s;
     }
     .mic-ring.active {
@@ -48,31 +39,18 @@
     }
     .mic-ring svg { width: 40px; height: 40px; fill: #9ca3af; transition: fill 0.3s; }
     .mic-ring.active svg { fill: #34d399; }
-
     .meter {
-      width: 100%;
-      height: 6px;
-      background: #374151;
-      border-radius: 3px;
-      overflow: hidden;
-      margin-bottom: 28px;
+      width: 100%; height: 6px; background: #374151;
+      border-radius: 3px; overflow: hidden; margin-bottom: 28px;
     }
     .meter-bar {
-      height: 100%;
-      width: 0%;
+      height: 100%; width: 0%;
       background: linear-gradient(90deg, #34d399, #10b981);
-      border-radius: 3px;
-      transition: width 0.05s linear;
+      border-radius: 3px; transition: width 0.05s linear;
     }
-
     button {
-      width: 100%;
-      padding: 12px;
-      border: none;
-      border-radius: 10px;
-      font-size: 0.95rem;
-      font-weight: 600;
-      cursor: pointer;
+      width: 100%; padding: 12px; border: none; border-radius: 10px;
+      font-size: 0.95rem; font-weight: 600; cursor: pointer;
       transition: background 0.2s, transform 0.1s;
     }
     button:active { transform: scale(0.98); }
@@ -80,13 +58,7 @@
     #btn-listen:hover { background: #2563eb; }
     #btn-listen.stop { background: #ef4444; }
     #btn-listen.stop:hover { background: #dc2626; }
-
-    .status {
-      margin-top: 16px;
-      font-size: 0.8rem;
-      color: #6b7280;
-      min-height: 20px;
-    }
+    .status { margin-top: 16px; font-size: 0.8rem; color: #6b7280; min-height: 20px; }
     .status.error { color: #f87171; }
     .status.ok { color: #34d399; }
   </style>
@@ -95,86 +67,118 @@
   <div class="card">
     <h1>Remote Mic</h1>
     <p class="subtitle">Home Assistant host microphone</p>
-
     <div class="mic-ring" id="mic-ring">
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
         <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm-1.5 18.94V22h3v-2.06A7.003 7.003 0 0 0 19 13h-2a5 5 0 0 1-10 0H5a7.003 7.003 0 0 0 5.5 6.94z"/>
       </svg>
     </div>
-
     <div class="meter"><div class="meter-bar" id="meter-bar"></div></div>
-
     <button id="btn-listen">Listen</button>
     <p class="status" id="status">Disconnected</p>
   </div>
 
-  <script>
-    const btn = document.getElementById('btn-listen');
+  <script type="module">
+    // AudioWorklet that plays a queue of Float32 chunks
+    const WORKLET = `
+      class PCMPlayer extends AudioWorkletProcessor {
+        constructor() { super(); this._q = []; this._buf = new Float32Array(0); this._pos = 0; this.port.onmessage = e => this._q.push(e.data); }
+        process(inputs, outputs) {
+          const out = outputs[0][0]; let written = 0;
+          while (written < out.length) {
+            if (this._pos >= this._buf.length) {
+              if (!this._q.length) { out.fill(0, written); return true; }
+              this._buf = this._q.shift(); this._pos = 0;
+            }
+            const n = Math.min(out.length - written, this._buf.length - this._pos);
+            out.set(this._buf.subarray(this._pos, this._pos + n), written);
+            this._pos += n; written += n;
+          }
+          return true;
+        }
+      }
+      registerProcessor('pcm-player', PCMPlayer);
+    `;
+
+    const btn      = document.getElementById('btn-listen');
     const statusEl = document.getElementById('status');
-    const ring = document.getElementById('mic-ring');
+    const ring     = document.getElementById('mic-ring');
     const meterBar = document.getElementById('meter-bar');
 
-    let audio = null;
-    let audioCtx = null;
-    let source = null;
-    let analyser = null;
-    let animFrame = null;
+    let audioCtx = null, worklet = null, analyser = null, animFrame = null;
+    let abortCtrl = null;
 
-    function setStatus(msg, cls = '') {
-      statusEl.textContent = msg;
-      statusEl.className = 'status ' + cls;
+    function setStatus(msg, cls = '') { statusEl.textContent = msg; statusEl.className = 'status ' + cls; }
+
+    function baseUrl() {
+      // Works for both direct port access and HA ingress
+      return location.href.replace(/\/+$/, '');
     }
 
-    // Build URL relative to current page so it works via HA ingress too
-    function streamUrl() {
-      const base = location.href.replace(/\/[^/]*$/, '');
-      return base + '/stream.wav';
-    }
+    async function startListening() {
+      setStatus('Connecting…');
+      abortCtrl = new AbortController();
 
-    function startListening() {
-      audio = new Audio();
-      audio.src = streamUrl();
-      audio.crossOrigin = 'anonymous';
+      try {
+        const cfgRes = await fetch(`${baseUrl()}/config`, { signal: abortCtrl.signal });
+        const { sampleRate } = await cfgRes.json();
 
-      audioCtx = new AudioContext();
-      source = audioCtx.createMediaElementSource(audio);
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      analyser.connect(audioCtx.destination);
+        audioCtx = new AudioContext({ sampleRate });
 
-      audio.addEventListener('playing', () => {
+        const blob = new Blob([WORKLET], { type: 'application/javascript' });
+        const blobUrl = URL.createObjectURL(blob);
+        await audioCtx.audioWorklet.addModule(blobUrl);
+        URL.revokeObjectURL(blobUrl);
+
+        worklet = new AudioWorkletNode(audioCtx, 'pcm-player');
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        worklet.connect(analyser);
+        analyser.connect(audioCtx.destination);
+
+        const res = await fetch(`${baseUrl()}/stream.wav`, { signal: abortCtrl.signal });
+        if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`);
+
         setStatus('Connected — listening', 'ok');
         ring.classList.add('active');
         btn.textContent = 'Stop';
         btn.classList.add('stop');
         animateMeter();
-      });
 
-      audio.addEventListener('error', () => {
-        setStatus('Stream error — check add-on logs', 'error');
-        stopListening();
-      });
+        const reader = res.body.getReader();
+        let headerSkipped = 0;
 
-      audio.addEventListener('ended', () => stopListening());
+        // Read PCM chunks from the HTTP stream and feed them to the worklet
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-      audio.play().catch((err) => {
-        setStatus(err.message, 'error');
-        stopListening();
-      });
+          // Skip the 44-byte WAV header on first chunk(s)
+          let pcm = value;
+          if (headerSkipped < 44) {
+            const skip = Math.min(44 - headerSkipped, value.length);
+            pcm = value.slice(skip);
+            headerSkipped += skip;
+          }
+          if (!pcm.length) continue;
 
-      setStatus('Connecting…');
+          // S16LE → Float32
+          const i16 = new Int16Array(pcm.buffer, pcm.byteOffset, Math.floor(pcm.byteLength / 2));
+          const f32 = new Float32Array(i16.length);
+          for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+          worklet.port.postMessage(f32);
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') setStatus(err.message, 'error');
+      } finally {
+        stopListening(false);
+      }
     }
 
-    function stopListening() {
-      if (audio) {
-        audio.pause();
-        audio.src = '';
-        audio = null;
-      }
-      if (source) { source.disconnect(); source = null; }
+    function stopListening(abort = true) {
+      if (abort && abortCtrl) { abortCtrl.abort(); abortCtrl = null; }
+      if (worklet)  { worklet.disconnect();  worklet  = null; }
       if (analyser) { analyser.disconnect(); analyser = null; }
-      if (audioCtx) { audioCtx.close(); audioCtx = null; }
+      if (audioCtx) { audioCtx.close();      audioCtx = null; }
       ring.classList.remove('active');
       btn.textContent = 'Listen';
       btn.classList.remove('stop');
@@ -184,28 +188,22 @@
 
     function animateMeter() {
       const data = new Uint8Array(analyser.frequencyBinCount);
-      function tick() {
+      (function tick() {
         analyser.getByteTimeDomainData(data);
         let sum = 0;
-        for (let i = 0; i < data.length; i++) {
-          const v = (data[i] - 128) / 128;
-          sum += v * v;
-        }
-        const rms = Math.sqrt(sum / data.length);
-        meterBar.style.width = Math.min(100, rms * 400) + '%';
+        for (let i = 0; i < data.length; i++) { const v = (data[i]-128)/128; sum += v*v; }
+        meterBar.style.width = Math.min(100, Math.sqrt(sum/data.length) * 400) + '%';
         animFrame = requestAnimationFrame(tick);
-      }
-      tick();
+      })();
     }
 
     function stopMeter() {
-      if (animFrame) cancelAnimationFrame(animFrame);
-      animFrame = null;
+      if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
       meterBar.style.width = '0%';
     }
 
     btn.addEventListener('click', () => {
-      if (audio) stopListening();
+      if (abortCtrl) stopListening();
       else startListening();
     });
   </script>
