@@ -82,7 +82,7 @@ registerProcessor('pcm-player',PCMPlayer);
 `;
 
 // ─── State ─────────────────────────────────────────────────────────────────
-let ws=null, audioCtx=null, worklet=null, analyser=null, raf=null;
+let ws=null, audioCtx=null, worklet=null, scriptProc=null, enqueue=null, analyser=null, raf=null;
 
 const ring   = document.getElementById('ring');
 const bar    = document.getElementById('bar');
@@ -148,17 +148,41 @@ async function startListening() {
 
   try {
     audioCtx = new AudioContext({ sampleRate: cfg.sampleRate });
-
-    const blob   = new Blob([WORKLET_SRC], { type:'application/javascript' });
-    const blobUrl = URL.createObjectURL(blob);
-    await audioCtx.audioWorklet.addModule(blobUrl);
-    URL.revokeObjectURL(blobUrl);
-
-    worklet  = new AudioWorkletNode(audioCtx, 'pcm-player');
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 256;
-    worklet.connect(analyser);
     analyser.connect(audioCtx.destination);
+
+    if (audioCtx.audioWorklet) {
+      const blob    = new Blob([WORKLET_SRC], { type:'application/javascript' });
+      const blobUrl = URL.createObjectURL(blob);
+      await audioCtx.audioWorklet.addModule(blobUrl);
+      URL.revokeObjectURL(blobUrl);
+
+      worklet = new AudioWorkletNode(audioCtx, 'pcm-player');
+      worklet.connect(analyser);
+      enqueue = (f32) => worklet.port.postMessage(f32);
+    } else {
+      // AudioWorklet requires a secure context (HTTPS/localhost); fall back to
+      // the deprecated ScriptProcessorNode which works over plain HTTP.
+      const pcmQueue = [];
+      let pcmBuf = new Float32Array(0), pcmPos = 0;
+      scriptProc = audioCtx.createScriptProcessor(4096, 0, 1);
+      scriptProc.onaudioprocess = (e) => {
+        const ch = e.outputBuffer.getChannelData(0);
+        let w = 0;
+        while (w < ch.length) {
+          if (pcmPos >= pcmBuf.length) {
+            if (!pcmQueue.length) { ch.fill(0, w); break; }
+            pcmBuf = pcmQueue.shift(); pcmPos = 0;
+          }
+          const n = Math.min(ch.length - w, pcmBuf.length - pcmPos);
+          ch.set(pcmBuf.subarray(pcmPos, pcmPos + n), w);
+          pcmPos += n; w += n;
+        }
+      };
+      scriptProc.connect(analyser);
+      enqueue = (f32) => pcmQueue.push(f32);
+    }
 
     ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
@@ -175,7 +199,7 @@ async function startListening() {
       const i16 = new Int16Array(data);
       const f32 = new Float32Array(i16.length);
       for (let i=0; i<i16.length; i++) f32[i] = i16[i] / 32768;
-      worklet.port.postMessage(f32);
+      enqueue(f32);
     };
 
     ws.onclose  = ()  => teardown('Disconnected');
@@ -188,9 +212,11 @@ async function startListening() {
 
 function teardown(msg='Disconnected', cls='') {
   ws?.close(); ws=null;
-  worklet?.disconnect();  worklet=null;
-  analyser?.disconnect(); analyser=null;
-  audioCtx?.close();      audioCtx=null;
+  worklet?.disconnect();     worklet=null;
+  scriptProc?.disconnect();  scriptProc=null;
+  enqueue=null;
+  analyser?.disconnect();    analyser=null;
+  audioCtx?.close();         audioCtx=null;
   ring.classList.remove('on');
   btn.textContent = 'Listen';
   btn.className   = 'btn btn-listen';
