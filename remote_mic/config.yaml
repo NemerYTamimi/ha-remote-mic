@@ -29,4 +29,4 @@ schema:
   sample_rate: int
   channels: int
   bit_depth: int
-  device: str
+  device: list(default|hw:0,0|hw:1,0|hw:2,0|plughw:0,0|plughw:1,0|plughw:2,0)

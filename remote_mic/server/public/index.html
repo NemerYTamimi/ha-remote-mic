@@ -165,8 +165,10 @@
 
     async function startListening() {
       try {
-        // Fetch audio format from server
-        const cfg = await fetch('/config').then(r => r.json());
+        // Resolve URLs relative to current page — works for both direct
+        // port access and HA ingress (where the base path is not "/")
+        const base = location.pathname.replace(/\/[^/]*$/, '') || '';
+        const cfg = await fetch(`${base}/config`).then(r => r.json());
 
         audioCtx = new AudioContext({ sampleRate: cfg.sampleRate });
 
@@ -182,7 +184,7 @@
         analyser.connect(audioCtx.destination);
 
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-        ws = new WebSocket(`${proto}://${location.host}/stream`);
+        ws = new WebSocket(`${proto}://${location.host}${base}/stream`);
         ws.binaryType = 'arraybuffer';
 
         ws.onopen = () => {
