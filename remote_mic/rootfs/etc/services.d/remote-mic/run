@@ -1,4 +1,6 @@
-#!/usr/bin/with-contenv bashio
+#!/bin/bash
+# shellcheck source=/dev/null
+source /usr/lib/bashio/bashio.sh
 
 export SAMPLE_RATE=$(bashio::config 'sample_rate')
 export CHANNELS=$(bashio::config 'channels')
