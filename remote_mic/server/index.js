@@ -19,8 +19,8 @@ function loadConfig() {
 const cfg = loadConfig();
 const SAMPLE_RATE = cfg.sample_rate || 44100;
 const CHANNELS = cfg.channels || 1;
-const BIT_DEPTH = cfg.bit_depth || 16;
-const DEVICE = cfg.device || 'default';
+// pacat outputs s16le always; BIT_DEPTH kept for /config endpoint info
+const DEVICE = cfg.device || '';  // empty = PulseAudio default source
 const PORT = 8765;
 
 const app = express();
@@ -38,15 +38,17 @@ let recorder = null;
 let clients = new Set();
 
 function startRecorder() {
-  // Use arecord for all devices — "pulse" is a valid ALSA device name
-  // that routes through the PulseAudio server HA exposes on the host
-  const cmd = 'arecord';
+  // HA supervisor sets PULSE_SERVER when audio:true — pacat uses it directly.
+  // arecord -D pulse fails in Alpine because ALSA's pulse plugin isn't configured.
+  const cmd = 'pacat';
   const args = [
-    '-D', DEVICE,
-    '-r', String(SAMPLE_RATE),
-    '-c', String(CHANNELS),
-    '-f', bitDepthToAlsaFormat(BIT_DEPTH),
-    '-t', 'raw',
+    '--record',
+    '--raw',
+    `--rate=${SAMPLE_RATE}`,
+    `--channels=${CHANNELS}`,
+    '--format=s16le',
+    '--latency-msec=50',
+    ...(DEVICE ? [`--device=${DEVICE}`] : []),
   ];
 
   console.log(`[recorder] launching: ${cmd} ${args.join(' ')}`);

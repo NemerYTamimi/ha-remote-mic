@@ -1,7 +1,6 @@
 FROM node:20-alpine
 
 RUN apk add --no-cache \
-    alsa-utils \
     pulseaudio-utils
 
 WORKDIR /app
