@@ -1,141 +1,122 @@
 'use strict';
 
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const express = require('express');
-const path = require('path');
+const { WebSocketServer } = require('ws');
 const http = require('http');
+const path = require('path');
 const fs = require('fs');
 
-function loadConfig() {
-  try {
-    return JSON.parse(fs.readFileSync('/data/options.json', 'utf8'));
-  } catch {
-    return {};
-  }
+// ---------------------------------------------------------------------------
+// Config — read from /data/options.json (written by HA supervisor before start)
+// ---------------------------------------------------------------------------
+function loadOptions() {
+  try { return JSON.parse(fs.readFileSync('/data/options.json', 'utf8')); }
+  catch { return {}; }
 }
 
-const cfg = loadConfig();
-const SAMPLE_RATE = cfg.sample_rate || 44100;
-const CHANNELS = cfg.channels || 1;
-const BIT_DEPTH = cfg.bit_depth || 16;
-const DEVICE = cfg.device || '';
-const PORT = 8765;
+const opt = loadOptions();
+const DEVICE      = opt.device      || 'hw:0,0';
+const SAMPLE_RATE = opt.sample_rate || 44100;
+const CHANNELS    = opt.channels    || 1;
+const BIT_DEPTH   = opt.bit_depth   || 16;
+const PORT        = 8765;
 
-// HA supervisor should set PULSE_SERVER when audio:true, but with a plain
-// alpine image it sometimes doesn't. Fall back to the known HA OS socket path.
-if (!process.env.PULSE_SERVER) {
-  const fallback = 'unix:/run/audio/pulse.sock';
-  process.env.PULSE_SERVER = fallback;
-  console.log(`[config] PULSE_SERVER not set — using fallback: ${fallback}`);
-} else {
-  console.log(`[config] PULSE_SERVER=${process.env.PULSE_SERVER}`);
+const ALSA_FORMAT = { 8: 'U8', 16: 'S16_LE', 24: 'S24_LE', 32: 'S32_LE' }[BIT_DEPTH] || 'S16_LE';
+
+console.log('[remote-mic] starting');
+console.log(`[remote-mic] device=${DEVICE}  rate=${SAMPLE_RATE}  ch=${CHANNELS}  bits=${BIT_DEPTH}`);
+
+// ---------------------------------------------------------------------------
+// List available ALSA capture devices on startup for diagnostics
+// ---------------------------------------------------------------------------
+try {
+  const list = execSync('arecord -l 2>&1').toString().trim();
+  console.log('[remote-mic] ALSA capture devices:\n' + list);
+} catch {
+  console.warn('[remote-mic] arecord -l failed — /dev/snd may not be mounted');
 }
 
-console.log(`[config] rate=${SAMPLE_RATE} ch=${CHANNELS} bits=${BIT_DEPTH} device="${DEVICE || '(default)'}"`);
-
-// Expose the direct host port in /config so the browser can bypass ingress
-// (HA ingress buffers HTTP streams which breaks live audio)
-const HOST_PORT = process.env.DIRECT_PORT || PORT;
-
-const app = express();
+// ---------------------------------------------------------------------------
+// HTTP + WebSocket server
+// ---------------------------------------------------------------------------
+const app    = express();
 const server = http.createServer(app);
+const wss    = new WebSocketServer({ server, path: '/ws' });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Audio config + direct port so browser can connect outside ingress
 app.get('/config', (_req, res) => {
-  // Return directPort so the browser can build http://<ha-host>:directPort/stream.wav
-  // bypassing HA ingress, which buffers HTTP responses and breaks live streaming.
-  res.json({ sampleRate: SAMPLE_RATE, channels: CHANNELS, bitDepth: BIT_DEPTH, directPort: PORT });
+  res.json({ sampleRate: SAMPLE_RATE, channels: CHANNELS, bitDepth: BIT_DEPTH, port: PORT });
 });
 
-// Set of active HTTP streaming responses
-const listeners = new Set();
+// List capture devices — useful for the UI device picker
+app.get('/devices', (_req, res) => {
+  try {
+    const raw = execSync('arecord -l 2>&1').toString();
+    // Parse lines like: card 0: PCH [HDA Intel PCH], device 0: ALC... [Mic]
+    const devices = [];
+    for (const line of raw.split('\n')) {
+      const m = line.match(/^card\s+(\d+).*?device\s+(\d+)/i);
+      if (m) {
+        const label = line.replace(/^card\s+\d+:\s*/i, '').trim();
+        devices.push({ value: `hw:${m[1]},${m[2]}`, label });
+      }
+    }
+    res.json({ devices, current: DEVICE });
+  } catch (err) {
+    res.json({ devices: [], current: DEVICE, error: err.message });
+  }
+});
 
-let recorder = null;
-
-function wavHeader(sampleRate, channels, bitDepth) {
-  // Write a WAV header with "infinite" data length so browsers stream forever
-  const buf = Buffer.alloc(44);
-  const byteRate = sampleRate * channels * (bitDepth / 8);
-  const blockAlign = channels * (bitDepth / 8);
-  buf.write('RIFF', 0);
-  buf.writeUInt32LE(0xffffffff, 4);      // chunk size — infinite
-  buf.write('WAVE', 8);
-  buf.write('fmt ', 12);
-  buf.writeUInt32LE(16, 16);             // subchunk size
-  buf.writeUInt16LE(1, 20);             // PCM
-  buf.writeUInt16LE(channels, 22);
-  buf.writeUInt32LE(sampleRate, 24);
-  buf.writeUInt32LE(byteRate, 28);
-  buf.writeUInt16LE(blockAlign, 32);
-  buf.writeUInt16LE(bitDepth, 34);
-  buf.write('data', 36);
-  buf.writeUInt32LE(0xffffffff, 40);    // data size — infinite
-  return buf;
-}
+// ---------------------------------------------------------------------------
+// Audio recorder — spawns arecord, broadcasts raw PCM to all WS clients
+// ---------------------------------------------------------------------------
+let recorder  = null;
+const clients = new Set();
 
 function startRecorder() {
-  const args = [
-    '--record',
-    '--raw',
-    `--rate=${SAMPLE_RATE}`,
-    `--channels=${CHANNELS}`,
-    '--format=s16le',
-    '--latency-msec=50',
-    ...(DEVICE ? [`--device=${DEVICE}`] : []),
-  ];
+  const args = ['-D', DEVICE, '-r', String(SAMPLE_RATE), '-c', String(CHANNELS),
+                '-f', ALSA_FORMAT, '-t', 'raw'];
+  console.log(`[recorder] arecord ${args.join(' ')}`);
 
-  console.log(`[recorder] pacat ${args.join(' ')}`);
-  const proc = spawn('pacat', args);
+  const proc = spawn('arecord', args);
 
-  proc.stdout.on('data', (chunk) => {
-    for (const res of listeners) {
-      res.write(chunk);
+  proc.stdout.on('data', chunk => {
+    for (const ws of clients) {
+      if (ws.readyState === 1) ws.send(chunk, { binary: true });
     }
   });
 
-  proc.stderr.on('data', (d) => console.error(`[recorder] ${d.toString().trim()}`));
+  proc.stderr.on('data', d => console.error('[recorder]', d.toString().trim()));
 
-  proc.on('close', (code) => {
-    console.warn(`[recorder] exited (code ${code}), restarting in 2s…`);
+  proc.on('close', code => {
+    console.warn(`[recorder] exited (${code}), retry in 2 s`);
     recorder = null;
-    setTimeout(() => {
-      if (listeners.size > 0) startRecorder();
-    }, 2000);
+    if (clients.size > 0) setTimeout(startRecorder, 2000);
   });
 
   recorder = proc;
 }
 
 function stopRecorder() {
-  if (recorder) {
-    recorder.kill();
-    recorder = null;
-  }
+  recorder?.kill();
+  recorder = null;
 }
 
-// Browser connects here and receives a live WAV stream
-app.get('/stream.wav', (req, res) => {
-  console.log(`[stream] client connected from ${req.socket.remoteAddress}`);
-
-  res.setHeader('Content-Type', 'audio/wav');
-  res.setHeader('Transfer-Encoding', 'chunked');
-  res.setHeader('Cache-Control', 'no-cache, no-store');
-  res.setHeader('Connection', 'keep-alive');
-
-  // Send WAV header so the browser knows the audio format immediately
-  res.write(wavHeader(SAMPLE_RATE, CHANNELS, BIT_DEPTH));
-
-  listeners.add(res);
+// ---------------------------------------------------------------------------
+// WebSocket — one connection per browser tab
+// ---------------------------------------------------------------------------
+wss.on('connection', (ws, req) => {
+  console.log(`[ws] connected  ${req.socket.remoteAddress}  total=${clients.size + 1}`);
+  clients.add(ws);
   if (!recorder) startRecorder();
 
-  req.on('close', () => {
-    listeners.delete(res);
-    console.log(`[stream] client disconnected — total: ${listeners.size}`);
-    if (listeners.size === 0) stopRecorder();
-  });
+  ws.on('close',   () => { clients.delete(ws); console.log(`[ws] closed  total=${clients.size}`); if (!clients.size) stopRecorder(); });
+  ws.on('error',   err => { console.error('[ws] error', err.message); clients.delete(ws); });
+  ws.on('message', ()  => {}); // ignore any client messages
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[server] listening on http://0.0.0.0:${PORT}`);
-});
+server.listen(PORT, '0.0.0.0', () =>
+  console.log(`[remote-mic] ready  http://0.0.0.0:${PORT}`));

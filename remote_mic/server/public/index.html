@@ -1,213 +1,220 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Remote Mic</title>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #111827;
-      color: #f3f4f6;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .card {
-      background: #1f2937;
-      border: 1px solid #374151;
-      border-radius: 16px;
-      padding: 40px;
-      width: 340px;
-      text-align: center;
-      box-shadow: 0 25px 50px rgba(0,0,0,0.4);
-    }
-    h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 6px; }
-    .subtitle { font-size: 0.85rem; color: #9ca3af; margin-bottom: 32px; }
-    .mic-ring {
-      width: 100px; height: 100px; border-radius: 50%;
-      margin: 0 auto 28px;
-      display: flex; align-items: center; justify-content: center;
-      background: #374151; border: 3px solid #4b5563;
-      transition: border-color 0.3s, box-shadow 0.3s;
-    }
-    .mic-ring.active {
-      border-color: #34d399;
-      box-shadow: 0 0 0 8px rgba(52,211,153,0.15), 0 0 0 16px rgba(52,211,153,0.05);
-    }
-    .mic-ring svg { width: 40px; height: 40px; fill: #9ca3af; transition: fill 0.3s; }
-    .mic-ring.active svg { fill: #34d399; }
-    .meter {
-      width: 100%; height: 6px; background: #374151;
-      border-radius: 3px; overflow: hidden; margin-bottom: 28px;
-    }
-    .meter-bar {
-      height: 100%; width: 0%;
-      background: linear-gradient(90deg, #34d399, #10b981);
-      border-radius: 3px; transition: width 0.05s linear;
-    }
-    button {
-      width: 100%; padding: 12px; border: none; border-radius: 10px;
-      font-size: 0.95rem; font-weight: 600; cursor: pointer;
-      transition: background 0.2s, transform 0.1s;
-    }
-    button:active { transform: scale(0.98); }
-    #btn-listen { background: #3b82f6; color: #fff; }
-    #btn-listen:hover { background: #2563eb; }
-    #btn-listen.stop { background: #ef4444; }
-    #btn-listen.stop:hover { background: #dc2626; }
-    .status { margin-top: 16px; font-size: 0.8rem; color: #6b7280; min-height: 20px; }
-    .status.error { color: #f87171; }
-    .status.ok { color: #34d399; }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#111827;color:#f3f4f6;min-height:100vh;display:flex;align-items:center;justify-content:center}
+    .card{background:#1f2937;border:1px solid #374151;border-radius:16px;padding:36px;width:360px;text-align:center;box-shadow:0 25px 50px rgba(0,0,0,.4)}
+    h1{font-size:1.2rem;font-weight:600;margin-bottom:4px}
+    .sub{font-size:.8rem;color:#6b7280;margin-bottom:28px}
+
+    /* mic ring */
+    .ring{width:96px;height:96px;border-radius:50%;margin:0 auto 20px;display:flex;align-items:center;justify-content:center;background:#374151;border:3px solid #4b5563;transition:border-color .3s,box-shadow .3s}
+    .ring.on{border-color:#34d399;box-shadow:0 0 0 8px rgba(52,211,153,.12),0 0 0 18px rgba(52,211,153,.05)}
+    .ring svg{width:38px;height:38px;fill:#6b7280;transition:fill .3s}
+    .ring.on svg{fill:#34d399}
+
+    /* level meter */
+    .meter{height:5px;background:#374151;border-radius:3px;overflow:hidden;margin-bottom:24px}
+    .bar{height:100%;width:0;background:linear-gradient(90deg,#34d399,#10b981);border-radius:3px;transition:width .04s linear}
+
+    /* device row */
+    .row{display:flex;gap:8px;margin-bottom:16px;align-items:center}
+    label{font-size:.75rem;color:#9ca3af;white-space:nowrap}
+    select{flex:1;background:#374151;color:#f3f4f6;border:1px solid #4b5563;border-radius:8px;padding:6px 8px;font-size:.8rem;cursor:pointer}
+    select:focus{outline:none;border-color:#3b82f6}
+
+    /* buttons */
+    .btn{width:100%;padding:11px;border:none;border-radius:10px;font-size:.95rem;font-weight:600;cursor:pointer;transition:background .2s,transform .1s}
+    .btn:active{transform:scale(.98)}
+    .btn-listen{background:#3b82f6;color:#fff}.btn-listen:hover{background:#2563eb}
+    .btn-stop{background:#ef4444;color:#fff}.btn-stop:hover{background:#dc2626}
+
+    /* status */
+    .status{margin-top:14px;font-size:.78rem;color:#6b7280;min-height:18px}
+    .status.ok{color:#34d399}.status.err{color:#f87171}
+
+    /* direct-url hint shown when accessing via ingress */
+    .hint{display:none;margin-top:14px;padding:10px 12px;background:#1e3a5f;border:1px solid #2563eb;border-radius:8px;font-size:.75rem;color:#93c5fd;text-align:left;line-height:1.5}
+    .hint a{color:#60a5fa}
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Remote Mic</h1>
-    <p class="subtitle">Home Assistant host microphone</p>
-    <div class="mic-ring" id="mic-ring">
-      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm-1.5 18.94V22h3v-2.06A7.003 7.003 0 0 0 19 13h-2a5 5 0 0 1-10 0H5a7.003 7.003 0 0 0 5.5 6.94z"/>
-      </svg>
-    </div>
-    <div class="meter"><div class="meter-bar" id="meter-bar"></div></div>
-    <button id="btn-listen">Listen</button>
-    <p class="status" id="status">Disconnected</p>
+<div class="card">
+  <h1>Remote Mic</h1>
+  <p class="sub">Home Assistant host microphone</p>
+
+  <div class="ring" id="ring">
+    <svg viewBox="0 0 24 24"><path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm-1.5 18.94V22h3v-2.06A7 7 0 0 0 19 13h-2a5 5 0 0 1-10 0H5a7 7 0 0 0 5.5 6.94z"/></svg>
   </div>
 
-  <script type="module">
-    // AudioWorklet that plays a queue of Float32 chunks
-    const WORKLET = `
-      class PCMPlayer extends AudioWorkletProcessor {
-        constructor() { super(); this._q = []; this._buf = new Float32Array(0); this._pos = 0; this.port.onmessage = e => this._q.push(e.data); }
-        process(inputs, outputs) {
-          const out = outputs[0][0]; let written = 0;
-          while (written < out.length) {
-            if (this._pos >= this._buf.length) {
-              if (!this._q.length) { out.fill(0, written); return true; }
-              this._buf = this._q.shift(); this._pos = 0;
-            }
-            const n = Math.min(out.length - written, this._buf.length - this._pos);
-            out.set(this._buf.subarray(this._pos, this._pos + n), written);
-            this._pos += n; written += n;
-          }
-          return true;
-        }
-      }
-      registerProcessor('pcm-player', PCMPlayer);
-    `;
+  <div class="meter"><div class="bar" id="bar"></div></div>
 
-    const btn      = document.getElementById('btn-listen');
-    const statusEl = document.getElementById('status');
-    const ring     = document.getElementById('mic-ring');
-    const meterBar = document.getElementById('meter-bar');
+  <div class="row">
+    <label for="dev">Device</label>
+    <select id="dev"><option value="">loading…</option></select>
+  </div>
 
-    let audioCtx = null, worklet = null, analyser = null, animFrame = null;
-    let abortCtrl = null;
+  <button class="btn btn-listen" id="btn">Listen</button>
+  <p class="status" id="status">Disconnected</p>
+  <div class="hint" id="hint"></div>
+</div>
 
-    function setStatus(msg, cls = '') { statusEl.textContent = msg; statusEl.className = 'status ' + cls; }
-
-    function ingressBase() {
-      return location.href.replace(/\/+$/, '');
+<script type="module">
+// ─── AudioWorklet (inline blob) ────────────────────────────────────────────
+const WORKLET_SRC = `
+class PCMPlayer extends AudioWorkletProcessor {
+  constructor() { super(); this._q=[]; this._buf=new Float32Array(0); this._pos=0; this.port.onmessage=e=>this._q.push(e.data); }
+  process(_,outputs){
+    const ch=outputs[0][0]; let w=0;
+    while(w<ch.length){
+      if(this._pos>=this._buf.length){ if(!this._q.length){ch.fill(0,w);return true;} this._buf=this._q.shift();this._pos=0; }
+      const n=Math.min(ch.length-w,this._buf.length-this._pos);
+      ch.set(this._buf.subarray(this._pos,this._pos+n),w); this._pos+=n; w+=n;
     }
+    return true;
+  }
+}
+registerProcessor('pcm-player',PCMPlayer);
+`;
 
-    async function startListening() {
-      setStatus('Connecting…');
-      abortCtrl = new AbortController();
+// ─── State ─────────────────────────────────────────────────────────────────
+let ws=null, audioCtx=null, worklet=null, analyser=null, raf=null;
 
-      try {
-        const cfgRes = await fetch(`${ingressBase()}/config`, { signal: abortCtrl.signal });
-        const { sampleRate, directPort } = await cfgRes.json();
+const ring   = document.getElementById('ring');
+const bar    = document.getElementById('bar');
+const btn    = document.getElementById('btn');
+const status = document.getElementById('status');
+const hint   = document.getElementById('hint');
+const devSel = document.getElementById('dev');
 
-        // HA ingress buffers HTTP responses — stream directly on the exposed port instead
-        const streamUrl = `http://${location.hostname}:${directPort}/stream.wav`;
+function setStatus(msg, cls='') { status.textContent=msg; status.className='status '+cls; }
 
-        audioCtx = new AudioContext({ sampleRate });
+// ─── Base URL (works for direct port and HA ingress) ───────────────────────
+const BASE = location.origin + location.pathname.replace(/\/+$/,'');
 
-        const blob = new Blob([WORKLET], { type: 'application/javascript' });
-        const blobUrl = URL.createObjectURL(blob);
-        await audioCtx.audioWorklet.addModule(blobUrl);
-        URL.revokeObjectURL(blobUrl);
+// ─── Load config + device list ─────────────────────────────────────────────
+async function init() {
+  try {
+    const [cfgRes, devRes] = await Promise.all([
+      fetch(`${BASE}/config`),
+      fetch(`${BASE}/devices`),
+    ]);
+    const cfg  = await cfgRes.json();
+    const devs = await devRes.json();
 
-        worklet = new AudioWorkletNode(audioCtx, 'pcm-player');
-        analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256;
-        worklet.connect(analyser);
-        analyser.connect(audioCtx.destination);
-
-        const res = await fetch(streamUrl, { signal: abortCtrl.signal });
-        if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`);
-
-        setStatus('Connected — listening', 'ok');
-        ring.classList.add('active');
-        btn.textContent = 'Stop';
-        btn.classList.add('stop');
-        animateMeter();
-
-        const reader = res.body.getReader();
-        let headerSkipped = 0;
-
-        // Read PCM chunks from the HTTP stream and feed them to the worklet
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          // Skip the 44-byte WAV header on first chunk(s)
-          let pcm = value;
-          if (headerSkipped < 44) {
-            const skip = Math.min(44 - headerSkipped, value.length);
-            pcm = value.slice(skip);
-            headerSkipped += skip;
-          }
-          if (!pcm.length) continue;
-
-          // S16LE → Float32
-          const i16 = new Int16Array(pcm.buffer, pcm.byteOffset, Math.floor(pcm.byteLength / 2));
-          const f32 = new Float32Array(i16.length);
-          for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
-          worklet.port.postMessage(f32);
-        }
-      } catch (err) {
-        if (err.name !== 'AbortError') setStatus(err.message, 'error');
-      } finally {
-        stopListening(false);
+    // Populate device selector
+    devSel.innerHTML = '';
+    if (devs.devices.length === 0) {
+      devSel.innerHTML = `<option value="${devs.current}">${devs.current} (no /dev/snd)</option>`;
+    } else {
+      for (const d of devs.devices) {
+        const o = document.createElement('option');
+        o.value = d.value;
+        o.textContent = `${d.value} — ${d.label}`;
+        if (d.value === devs.current) o.selected = true;
+        devSel.appendChild(o);
       }
     }
 
-    function stopListening(abort = true) {
-      if (abort && abortCtrl) { abortCtrl.abort(); abortCtrl = null; }
-      if (worklet)  { worklet.disconnect();  worklet  = null; }
-      if (analyser) { analyser.disconnect(); analyser = null; }
-      if (audioCtx) { audioCtx.close();      audioCtx = null; }
-      ring.classList.remove('active');
-      btn.textContent = 'Listen';
-      btn.classList.remove('stop');
-      setStatus('Disconnected');
-      stopMeter();
+    // If accessed via HA ingress the WS port may be blocked by browser
+    // mixed-content rules. Show a direct-access hint in that case.
+    const directUrl = `http://${location.hostname}:${cfg.port}`;
+    if (location.port !== String(cfg.port) && location.protocol === 'https:') {
+      hint.style.display = 'block';
+      hint.innerHTML = `HA ingress uses HTTPS but the stream port is HTTP.<br>
+        Open <a href="${directUrl}" target="_blank">${directUrl}</a> directly for audio.`;
     }
 
-    function animateMeter() {
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      (function tick() {
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) { const v = (data[i]-128)/128; sum += v*v; }
-        meterBar.style.width = Math.min(100, Math.sqrt(sum/data.length) * 400) + '%';
-        animFrame = requestAnimationFrame(tick);
-      })();
-    }
+    // Store cfg for connection
+    window._cfg = cfg;
+    btn.disabled = false;
+  } catch(e) {
+    setStatus('Failed to load config: '+e.message, 'err');
+  }
+}
 
-    function stopMeter() {
-      if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
-      meterBar.style.width = '0%';
-    }
+// ─── Connect ───────────────────────────────────────────────────────────────
+async function startListening() {
+  const cfg = window._cfg;
+  if (!cfg) return;
 
-    btn.addEventListener('click', () => {
-      if (abortCtrl) stopListening();
-      else startListening();
-    });
-  </script>
+  // Always connect to the direct port — ingress can't proxy binary WS reliably
+  const wsUrl = `ws://${location.hostname}:${cfg.port}/ws`;
+  setStatus('Connecting…');
+
+  try {
+    audioCtx = new AudioContext({ sampleRate: cfg.sampleRate });
+
+    const blob   = new Blob([WORKLET_SRC], { type:'application/javascript' });
+    const blobUrl = URL.createObjectURL(blob);
+    await audioCtx.audioWorklet.addModule(blobUrl);
+    URL.revokeObjectURL(blobUrl);
+
+    worklet  = new AudioWorkletNode(audioCtx, 'pcm-player');
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 256;
+    worklet.connect(analyser);
+    analyser.connect(audioCtx.destination);
+
+    ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      setStatus('Connected — listening', 'ok');
+      ring.classList.add('on');
+      btn.textContent = 'Stop';
+      btn.className   = 'btn btn-stop';
+      startMeter();
+    };
+
+    ws.onmessage = ({ data }) => {
+      const i16 = new Int16Array(data);
+      const f32 = new Float32Array(i16.length);
+      for (let i=0; i<i16.length; i++) f32[i] = i16[i] / 32768;
+      worklet.port.postMessage(f32);
+    };
+
+    ws.onclose  = ()  => teardown('Disconnected');
+    ws.onerror  = ()  => teardown('WebSocket error', 'err');
+
+  } catch(e) {
+    teardown(e.message, 'err');
+  }
+}
+
+function teardown(msg='Disconnected', cls='') {
+  ws?.close(); ws=null;
+  worklet?.disconnect();  worklet=null;
+  analyser?.disconnect(); analyser=null;
+  audioCtx?.close();      audioCtx=null;
+  ring.classList.remove('on');
+  btn.textContent = 'Listen';
+  btn.className   = 'btn btn-listen';
+  setStatus(msg, cls);
+  stopMeter();
+}
+
+// ─── Level meter ───────────────────────────────────────────────────────────
+function startMeter() {
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  (function tick() {
+    analyser.getByteTimeDomainData(data);
+    let s=0; for(const v of data){ const x=(v-128)/128; s+=x*x; }
+    bar.style.width = Math.min(100, Math.sqrt(s/data.length)*400)+'%';
+    raf = requestAnimationFrame(tick);
+  })();
+}
+function stopMeter() { cancelAnimationFrame(raf); raf=null; bar.style.width='0%'; }
+
+// ─── Button ────────────────────────────────────────────────────────────────
+btn.disabled = true;
+btn.addEventListener('click', () => ws ? teardown() : startListening());
+
+init();
+</script>
 </body>
 </html>

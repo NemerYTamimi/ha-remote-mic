@@ -1,8 +1,8 @@
 name: Remote Mic
-version: "1.1.0"
+version: "2.0.0"
 slug: remote_mic
 description: Stream the HA host microphone to remote browsers in real-time
-url: https://github.com/nemertamimi/ha-remote-mic
+url: https://github.com/NemerYTamimi/ha-remote-mic
 arch:
   - aarch64
   - amd64
@@ -11,22 +11,23 @@ arch:
   - i386
 startup: application
 boot: auto
-audio: true
+devices:
+  - /dev/snd
 ports:
   8765/tcp: 8765
 ports_description:
-  8765/tcp: WebSocket + Web UI
+  8765/tcp: Remote Mic UI + audio stream
 ingress: true
 ingress_port: 8765
 panel_icon: mdi:microphone
 panel_title: Remote Mic
 options:
+  device: "hw:0,0"
   sample_rate: 44100
   channels: 1
   bit_depth: 16
-  device: ""
 schema:
+  device: str
   sample_rate: int
   channels: int
   bit_depth: int
-  device: str
