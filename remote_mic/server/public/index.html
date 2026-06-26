@@ -41,7 +41,6 @@
       background: #374151;
       border: 3px solid #4b5563;
       transition: border-color 0.3s, box-shadow 0.3s;
-      position: relative;
     }
     .mic-ring.active {
       border-color: #34d399;
@@ -50,7 +49,6 @@
     .mic-ring svg { width: 40px; height: 40px; fill: #9ca3af; transition: fill 0.3s; }
     .mic-ring.active svg { fill: #34d399; }
 
-    /* Level meter */
     .meter {
       width: 100%;
       height: 6px;
@@ -78,11 +76,7 @@
       transition: background 0.2s, transform 0.1s;
     }
     button:active { transform: scale(0.98); }
-
-    #btn-listen {
-      background: #3b82f6;
-      color: #fff;
-    }
+    #btn-listen { background: #3b82f6; color: #fff; }
     #btn-listen:hover { background: #2563eb; }
     #btn-listen.stop { background: #ef4444; }
     #btn-listen.stop:hover { background: #dc2626; }
@@ -114,118 +108,73 @@
     <p class="status" id="status">Disconnected</p>
   </div>
 
-  <script type="module">
-    // PCM player AudioWorklet — processes raw S16LE chunks
-    const WORKLET_CODE = `
-      class PCMPlayer extends AudioWorkletProcessor {
-        constructor() {
-          super();
-          this._queue = [];
-          this._buf = new Float32Array(0);
-          this._pos = 0;
-          this.port.onmessage = (e) => this._queue.push(e.data);
-        }
-        process(inputs, outputs) {
-          const out = outputs[0][0];
-          let written = 0;
-          while (written < out.length) {
-            if (this._pos >= this._buf.length) {
-              if (this._queue.length === 0) { out.fill(0, written); return true; }
-              this._buf = this._queue.shift();
-              this._pos = 0;
-            }
-            const needed = out.length - written;
-            const available = this._buf.length - this._pos;
-            const n = Math.min(needed, available);
-            out.set(this._buf.subarray(this._pos, this._pos + n), written);
-            this._pos += n;
-            written += n;
-          }
-          return true;
-        }
-      }
-      registerProcessor('pcm-player', PCMPlayer);
-    `;
-
+  <script>
     const btn = document.getElementById('btn-listen');
-    const status = document.getElementById('status');
+    const statusEl = document.getElementById('status');
     const ring = document.getElementById('mic-ring');
     const meterBar = document.getElementById('meter-bar');
 
-    let ws = null;
+    let audio = null;
     let audioCtx = null;
-    let workletNode = null;
+    let source = null;
     let analyser = null;
     let animFrame = null;
 
     function setStatus(msg, cls = '') {
-      status.textContent = msg;
-      status.className = 'status ' + cls;
+      statusEl.textContent = msg;
+      statusEl.className = 'status ' + cls;
     }
 
-    async function startListening() {
-      try {
-        // Resolve URLs relative to current page — works for both direct
-        // port access and HA ingress (where the base path is not "/")
-        const base = location.pathname.replace(/\/[^/]*$/, '') || '';
-        const cfg = await fetch(`${base}/config`).then(r => r.json());
+    // Build URL relative to current page so it works via HA ingress too
+    function streamUrl() {
+      const base = location.href.replace(/\/[^/]*$/, '');
+      return base + '/stream.wav';
+    }
 
-        audioCtx = new AudioContext({ sampleRate: cfg.sampleRate });
+    function startListening() {
+      audio = new Audio();
+      audio.src = streamUrl();
+      audio.crossOrigin = 'anonymous';
 
-        const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
-        const url = URL.createObjectURL(blob);
-        await audioCtx.audioWorklet.addModule(url);
-        URL.revokeObjectURL(url);
+      audioCtx = new AudioContext();
+      source = audioCtx.createMediaElementSource(audio);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      analyser.connect(audioCtx.destination);
 
-        workletNode = new AudioWorkletNode(audioCtx, 'pcm-player');
-        analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256;
-        workletNode.connect(analyser);
-        analyser.connect(audioCtx.destination);
+      audio.addEventListener('playing', () => {
+        setStatus('Connected — listening', 'ok');
+        ring.classList.add('active');
+        btn.textContent = 'Stop';
+        btn.classList.add('stop');
+        animateMeter();
+      });
 
-        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-        ws = new WebSocket(`${proto}://${location.host}${base}/stream`);
-        ws.binaryType = 'arraybuffer';
+      audio.addEventListener('error', () => {
+        setStatus('Stream error — check add-on logs', 'error');
+        stopListening();
+      });
 
-        ws.onopen = () => {
-          setStatus('Connected — listening', 'ok');
-          ring.classList.add('active');
-          btn.textContent = 'Stop';
-          btn.classList.add('stop');
-          animateMeter();
-        };
+      audio.addEventListener('ended', () => stopListening());
 
-        ws.onmessage = (e) => {
-          // Convert S16LE bytes to Float32
-          const int16 = new Int16Array(e.data);
-          const float32 = new Float32Array(int16.length);
-          for (let i = 0; i < int16.length; i++) {
-            float32[i] = int16[i] / 32768;
-          }
-          workletNode.port.postMessage(float32);
-        };
-
-        ws.onerror = () => setStatus('WebSocket error', 'error');
-        ws.onclose = () => {
-          setStatus('Disconnected', 'error');
-          ring.classList.remove('active');
-          btn.textContent = 'Listen';
-          btn.classList.remove('stop');
-          stopMeter();
-        };
-
-      } catch (err) {
+      audio.play().catch((err) => {
         setStatus(err.message, 'error');
         stopListening();
-      }
+      });
+
+      setStatus('Connecting…');
     }
 
     function stopListening() {
-      ws?.close();
-      workletNode?.disconnect();
-      analyser?.disconnect();
-      audioCtx?.close();
-      ws = workletNode = analyser = audioCtx = null;
+      if (audio) {
+        audio.pause();
+        audio.src = '';
+        audio = null;
+      }
+      if (source) { source.disconnect(); source = null; }
+      if (analyser) { analyser.disconnect(); analyser = null; }
+      if (audioCtx) { audioCtx.close(); audioCtx = null; }
       ring.classList.remove('active');
       btn.textContent = 'Listen';
       btn.classList.remove('stop');
@@ -243,7 +192,7 @@
           sum += v * v;
         }
         const rms = Math.sqrt(sum / data.length);
-        meterBar.style.width = Math.min(100, rms * 300) + '%';
+        meterBar.style.width = Math.min(100, rms * 400) + '%';
         animFrame = requestAnimationFrame(tick);
       }
       tick();
@@ -256,11 +205,9 @@
     }
 
     btn.addEventListener('click', () => {
-      if (ws) stopListening();
+      if (audio) stopListening();
       else startListening();
     });
-
-    setStatus('Disconnected');
   </script>
 </body>
 </html>
