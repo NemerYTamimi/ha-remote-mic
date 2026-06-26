@@ -1,0 +1,16 @@
+{
+  "name": "ha-remote-mic-server",
+  "version": "1.0.0",
+  "description": "HA add-on: stream host microphone to remote browsers",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.17.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
