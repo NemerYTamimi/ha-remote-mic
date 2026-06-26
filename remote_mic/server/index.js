@@ -5,12 +5,23 @@ const express = require('express');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const http = require('http');
+const fs = require('fs');
 
-const SAMPLE_RATE = parseInt(process.env.SAMPLE_RATE || '44100', 10);
-const CHANNELS = parseInt(process.env.CHANNELS || '1', 10);
-const BIT_DEPTH = parseInt(process.env.BIT_DEPTH || '16', 10);
-const DEVICE = process.env.AUDIO_DEVICE || 'default';
-const PORT = parseInt(process.env.PORT || '8765', 10);
+// HA supervisor writes add-on config to /data/options.json before start
+function loadConfig() {
+  try {
+    return JSON.parse(fs.readFileSync('/data/options.json', 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+const cfg = loadConfig();
+const SAMPLE_RATE = cfg.sample_rate || 44100;
+const CHANNELS = cfg.channels || 1;
+const BIT_DEPTH = cfg.bit_depth || 16;
+const DEVICE = cfg.device || 'default';
+const PORT = 8765;
 
 const app = express();
 const server = http.createServer(app);

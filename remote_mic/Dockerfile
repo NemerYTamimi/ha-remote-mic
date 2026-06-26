@@ -1,9 +1,6 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
-FROM $BUILD_FROM
+FROM node:20-alpine
 
 RUN apk add --no-cache \
-    nodejs \
-    npm \
     alsa-utils \
     pulseaudio-utils
 
@@ -14,5 +11,4 @@ RUN npm ci --omit=dev
 
 COPY server/ ./
 
-COPY rootfs /
-RUN chmod a+x /etc/services.d/remote-mic/run
+CMD ["node", "index.js"]
