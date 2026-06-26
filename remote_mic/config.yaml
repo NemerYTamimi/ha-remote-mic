@@ -1,5 +1,5 @@
 name: Remote Mic
-version: "1.0.0"
+version: "1.1.0"
 slug: remote_mic
 description: Stream the HA host microphone to remote browsers in real-time
 url: https://github.com/nemertamimi/ha-remote-mic
