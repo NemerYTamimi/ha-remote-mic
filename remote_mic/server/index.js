@@ -21,8 +21,21 @@ const BIT_DEPTH = cfg.bit_depth || 16;
 const DEVICE = cfg.device || '';
 const PORT = 8765;
 
+// HA supervisor should set PULSE_SERVER when audio:true, but with a plain
+// alpine image it sometimes doesn't. Fall back to the known HA OS socket path.
+if (!process.env.PULSE_SERVER) {
+  const fallback = 'unix:/run/audio/pulse.sock';
+  process.env.PULSE_SERVER = fallback;
+  console.log(`[config] PULSE_SERVER not set — using fallback: ${fallback}`);
+} else {
+  console.log(`[config] PULSE_SERVER=${process.env.PULSE_SERVER}`);
+}
+
 console.log(`[config] rate=${SAMPLE_RATE} ch=${CHANNELS} bits=${BIT_DEPTH} device="${DEVICE || '(default)'}"`);
-console.log(`[config] PULSE_SERVER=${process.env.PULSE_SERVER || '(not set)'}`);
+
+// Expose the direct host port in /config so the browser can bypass ingress
+// (HA ingress buffers HTTP streams which breaks live audio)
+const HOST_PORT = process.env.DIRECT_PORT || PORT;
 
 const app = express();
 const server = http.createServer(app);
@@ -30,7 +43,9 @@ const server = http.createServer(app);
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/config', (_req, res) => {
-  res.json({ sampleRate: SAMPLE_RATE, channels: CHANNELS, bitDepth: BIT_DEPTH });
+  // Return directPort so the browser can build http://<ha-host>:directPort/stream.wav
+  // bypassing HA ingress, which buffers HTTP responses and breaks live streaming.
+  res.json({ sampleRate: SAMPLE_RATE, channels: CHANNELS, bitDepth: BIT_DEPTH, directPort: PORT });
 });
 
 // Set of active HTTP streaming responses

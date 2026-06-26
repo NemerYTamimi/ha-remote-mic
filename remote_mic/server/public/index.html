@@ -109,8 +109,7 @@
 
     function setStatus(msg, cls = '') { statusEl.textContent = msg; statusEl.className = 'status ' + cls; }
 
-    function baseUrl() {
-      // Works for both direct port access and HA ingress
+    function ingressBase() {
       return location.href.replace(/\/+$/, '');
     }
 
@@ -119,8 +118,11 @@
       abortCtrl = new AbortController();
 
       try {
-        const cfgRes = await fetch(`${baseUrl()}/config`, { signal: abortCtrl.signal });
-        const { sampleRate } = await cfgRes.json();
+        const cfgRes = await fetch(`${ingressBase()}/config`, { signal: abortCtrl.signal });
+        const { sampleRate, directPort } = await cfgRes.json();
+
+        // HA ingress buffers HTTP responses — stream directly on the exposed port instead
+        const streamUrl = `http://${location.hostname}:${directPort}/stream.wav`;
 
         audioCtx = new AudioContext({ sampleRate });
 
@@ -135,7 +137,7 @@
         worklet.connect(analyser);
         analyser.connect(audioCtx.destination);
 
-        const res = await fetch(`${baseUrl()}/stream.wav`, { signal: abortCtrl.signal });
+        const res = await fetch(streamUrl, { signal: abortCtrl.signal });
         if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`);
 
         setStatus('Connected — listening', 'ok');
