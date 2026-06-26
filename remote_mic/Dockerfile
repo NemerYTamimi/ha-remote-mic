@@ -1,7 +1,6 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
 FROM $BUILD_FROM
 
-# Install Node.js, ALSA utils, and PulseAudio client
 RUN apk add --no-cache \
     nodejs \
     npm \
@@ -15,6 +14,5 @@ RUN npm ci --omit=dev
 
 COPY server/ ./
 
-RUN chmod +x /app/run.sh
-
-CMD ["/app/run.sh"]
+COPY rootfs /
+RUN chmod a+x /etc/services.d/remote-mic/run
