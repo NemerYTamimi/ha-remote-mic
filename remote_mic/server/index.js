@@ -19,7 +19,7 @@ function loadConfig() {
 const cfg = loadConfig();
 const SAMPLE_RATE = cfg.sample_rate || 44100;
 const CHANNELS = cfg.channels || 1;
-// pacat outputs s16le always; BIT_DEPTH kept for /config endpoint info
+const BIT_DEPTH = cfg.bit_depth || 16;
 const DEVICE = cfg.device || '';  // empty = PulseAudio default source
 const PORT = 8765;
 
