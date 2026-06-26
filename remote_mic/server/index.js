@@ -38,30 +38,16 @@ let recorder = null;
 let clients = new Set();
 
 function startRecorder() {
-  // Prefer PulseAudio (available when HA sets PULSE_SERVER), fall back to ALSA arecord
-  const usePulse = !!process.env.PULSE_SERVER || !!process.env.PULSE_RUNTIME_PATH;
-
-  let cmd, args;
-  if (usePulse) {
-    cmd = 'pacat';
-    args = [
-      '--record',
-      '--raw',
-      `--rate=${SAMPLE_RATE}`,
-      `--channels=${CHANNELS}`,
-      '--format=s16le',
-      `--device=${DEVICE === 'default' ? '' : DEVICE}`,
-    ].filter(Boolean);
-  } else {
-    cmd = 'arecord';
-    args = [
-      '-D', DEVICE,
-      '-r', String(SAMPLE_RATE),
-      '-c', String(CHANNELS),
-      '-f', bitDepthToAlsaFormat(BIT_DEPTH),
-      '-t', 'raw',
-    ];
-  }
+  // Use arecord for all devices — "pulse" is a valid ALSA device name
+  // that routes through the PulseAudio server HA exposes on the host
+  const cmd = 'arecord';
+  const args = [
+    '-D', DEVICE,
+    '-r', String(SAMPLE_RATE),
+    '-c', String(CHANNELS),
+    '-f', bitDepthToAlsaFormat(BIT_DEPTH),
+    '-t', 'raw',
+  ];
 
   console.log(`[recorder] launching: ${cmd} ${args.join(' ')}`);
   const proc = spawn(cmd, args);

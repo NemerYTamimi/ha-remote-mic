@@ -24,9 +24,9 @@ options:
   sample_rate: 44100
   channels: 1
   bit_depth: 16
-  device: "default"
+  device: "pulse"
 schema:
   sample_rate: int
   channels: int
   bit_depth: int
-  device: list(default|hw:0,0|hw:1,0|hw:2,0|plughw:0,0|plughw:1,0|plughw:2,0)
+  device: list(pulse|default|hw:0,0|hw:1,0|hw:2,0|plughw:0,0|plughw:1,0|plughw:2,0)
